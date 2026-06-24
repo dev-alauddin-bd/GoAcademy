@@ -1,0 +1,600 @@
+// prisma/schema.prisma
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+// ============================================================
+// 1. ENUMS
+// ============================================================
+
+enum Role {
+  STUDENT
+  INSTRUCTOR
+  ACADEMY_ADMIN
+  SUPER_ADMIN
+}
+
+enum UserStatus {
+  ACTIVE
+  BLOCKED
+  PENDING
+}
+
+enum AcademyStatus {
+  PENDING
+  ACTIVE
+  SUSPENDED
+  REJECTED
+}
+
+enum PaymentStatus {
+  PENDING
+  COMPLETED
+  FAILED
+  REFUNDED
+}
+
+enum PaymentType {
+  COURSE_PURCHASE
+  SUBSCRIPTION
+  LIVE_SESSION
+}
+
+enum EnrollmentStatus {
+  ACTIVE
+  PENDING
+  CANCELLED
+  COMPLETED
+}
+
+enum SubscriptionStatus {
+  ACTIVE
+  INACTIVE
+  CANCELLED
+  EXPIRED
+}
+
+// ============================================================
+// 2. PERMISSION SYSTEM (RBAC)
+// ============================================================
+
+model Permission {
+  id          String  @id @default(uuid())
+  action      String  @unique
+  description String?
+  module      String
+
+  userPermissions UserPermission[]
+
+  @@map("permissions")
+}
+
+model UserPermission {
+  id String @id @default(uuid())
+
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  permissionId String
+  permission   Permission @relation(fields: [permissionId], references: [id], onDelete: Cascade)
+
+  academyId String
+  academy   Academy @relation(fields: [academyId], references: [id], onDelete: Cascade)
+
+  grantedBy String?
+  createdAt DateTime @default(now())
+
+  @@unique([userId, permissionId, academyId])
+  @@index([userId])
+  @@index([academyId])
+  @@map("user_permissions")
+}
+
+// ============================================================
+// 3. ACADEMY (TENANT)
+// ============================================================
+
+model Academy {
+  id           String  @id @default(uuid())
+  name         String
+  slug         String  @unique
+  customDomain String? @unique
+
+  logo   String?
+  banner String?
+
+  ownerId String
+  owner   User   @relation("AcademyOwner", fields: [ownerId], references: [id])
+
+  status   AcademyStatus @default(PENDING)
+  settings Json?         @default("{}")
+  metadata Json?         @default("{}")
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  users           User[]           @relation("AcademyMembers")
+  userPermissions UserPermission[]
+  categories      Category[]
+  courses         Course[]
+  liveSessions    LiveSession[]
+  subscriptions   Subscription[]
+  chatMessages    ChatMessage[]
+  enrollments     Enrollment[]
+  payments        Payment[]
+  reviews         Review[]
+
+  @@index([status])
+  @@index([ownerId])
+  @@map("academies")
+}
+
+// ============================================================
+// 4. USER
+// ============================================================
+
+model User {
+  id       String @id @default(uuid())
+  email    String
+  password String
+
+  role   Role       @default(STUDENT)
+  status UserStatus @default(ACTIVE)
+
+  name   String
+  avatar String?
+  phone  String?
+
+  metadata Json? @default("{}")
+
+  academyId String
+  academy   Academy @relation("AcademyMembers", fields: [academyId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  ownedAcademies Academy[] @relation("AcademyOwner")
+
+  userPermissions UserPermission[]
+
+  enrollments           Enrollment[]
+  payments              Payment[]
+  reviews               Review[]
+  lessonProgress        LessonProgress[]
+  assignmentSubmissions AssignmentSubmission[]
+  hostedLiveSessions    LiveSession[]
+  courses               Course[]
+
+  @@unique([email, academyId])
+  @@index([role])
+  @@index([status])
+  @@index([academyId])
+  @@map("users")
+}
+
+// ============================================================
+// 5. SUBSCRIPTION PLANS
+// ============================================================
+
+model SubscriptionPlan {
+  id          String   @id @default(uuid())
+  name        String
+  slug        String   @unique
+  description String?
+  amount      Float
+  currency    String   @default("usd")
+  duration    Int
+  features    String[] @default([])
+  isActive    Boolean  @default(true)
+
+  maxCourses     Int @default(10)
+  maxStudents    Int @default(100)
+  maxStorageGB   Int @default(5)
+  maxInstructors Int @default(2)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  subscriptions Subscription[]
+
+  @@map("subscription_plans")
+}
+
+model Subscription {
+  id String @id @default(uuid())
+
+  academyId String
+  academy   Academy @relation(fields: [academyId], references: [id], onDelete: Cascade)
+
+  planId String
+  plan   SubscriptionPlan @relation(fields: [planId], references: [id])
+
+  amount   Float
+  currency String @default("usd")
+
+  status SubscriptionStatus @default(ACTIVE)
+
+  startedAt DateTime  @default(now())
+  endedAt   DateTime?
+
+  stripeCustomerId     String?
+  stripeSubscriptionId String?
+
+  @@index([academyId])
+  @@index([planId])
+  @@index([status])
+  @@map("subscriptions")
+}
+
+// ============================================================
+// 6. CATEGORY
+// ============================================================
+
+model Category {
+  id       String  @id @default(uuid())
+  name     String
+  slug     String
+  isActive Boolean @default(true)
+
+  academyId String
+  academy   Academy @relation(fields: [academyId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  courses Course[]
+
+  @@unique([academyId, name])
+  @@unique([academyId, slug])
+  @@index([academyId])
+  @@map("categories")
+}
+
+// ============================================================
+// 7. COURSE
+// ============================================================
+
+model Course {
+  id           String  @id @default(uuid())
+  title        String
+  description  String?
+  thumbnail    String
+  previewVideo String?
+  slug         String
+
+  price          Float   @default(0)
+  currency       String  @default("usd")
+  isPublished    Boolean @default(false)
+  isDeleted      Boolean @default(false)
+  hasCertificate Boolean @default(false)
+
+  learningOutcomes String[] @default([])
+  requirements     String[] @default([])
+  tags             String[] @default([])
+  targetAudience   String[] @default([])
+
+  level String @default("BEGINNER")
+
+  academyId String
+  academy   Academy @relation(fields: [academyId], references: [id], onDelete: Cascade)
+
+  categoryId String
+  category   Category @relation(fields: [categoryId], references: [id], onDelete: Restrict)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  modules     Module[]
+  enrollments Enrollment[]
+  payments    Payment[]
+  reviews     Review[]
+  user        User?        @relation(fields: [userId], references: [id])
+  userId      String?
+
+  @@unique([academyId, slug])
+  @@index([categoryId])
+  @@index([academyId])
+  @@map("courses")
+}
+
+// ============================================================
+// 8. MODULE & LESSON
+// ============================================================
+
+model Module {
+  id        String  @id @default(uuid())
+  title     String
+  order     Int     @default(0)
+  isDeleted Boolean @default(false)
+
+  courseId String
+  course   Course @relation(fields: [courseId], references: [id], onDelete: Cascade)
+
+  lessons     Lesson[]
+  assignments Assignment[]
+
+  @@index([courseId, order])
+  @@index([isDeleted])
+  @@map("modules")
+}
+
+model Lesson {
+  id            String  @id @default(uuid())
+  title         String
+  videoUrl      String
+  duration      Float   @default(0)
+  content       String?
+  order         Int     @default(0)
+  isDeleted     Boolean @default(false)
+  isFreePreview Boolean @default(false)
+
+  moduleId String
+  module   Module @relation(fields: [moduleId], references: [id], onDelete: Cascade)
+
+  progress LessonProgress[]
+
+  @@index([moduleId, order])
+  @@index([isDeleted])
+  @@map("lessons")
+}
+
+// ============================================================
+// 9. PROGRESS
+// ============================================================
+
+model LessonProgress {
+  id String @id @default(uuid())
+
+  studentId String
+  student   User   @relation(fields: [studentId], references: [id], onDelete: Cascade)
+
+  lessonId String
+  lesson   Lesson @relation(fields: [lessonId], references: [id], onDelete: Cascade)
+
+  isCompleted Boolean @default(false)
+  progress    Float   @default(0)
+  watchTime   Int     @default(0)
+
+  lastWatchedAt DateTime?
+  updatedAt     DateTime  @updatedAt
+
+  @@unique([studentId, lessonId])
+  @@index([studentId])
+  @@index([lessonId])
+  @@map("lesson_progress")
+}
+
+// ============================================================
+// 10. ASSIGNMENT
+// ============================================================
+
+model Assignment {
+  id          String    @id @default(uuid())
+  title       String
+  description String
+  deadline    DateTime?
+  maxScore    Float     @default(100)
+  isDeleted   Boolean   @default(false)
+
+  moduleId String
+  module   Module @relation(fields: [moduleId], references: [id], onDelete: Cascade)
+
+  submissions AssignmentSubmission[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([moduleId])
+  @@map("assignments")
+}
+
+model AssignmentSubmission {
+  id String @id @default(uuid())
+
+  content     String
+  attachments String[] @default([])
+  status      String   @default("SUBMITTED")
+  score       Float?
+  feedback    String?
+
+  assignmentId String
+  assignment   Assignment @relation(fields: [assignmentId], references: [id], onDelete: Cascade)
+
+  studentId String
+  student   User   @relation(fields: [studentId], references: [id], onDelete: Cascade)
+
+  submittedAt DateTime  @default(now())
+  gradedAt    DateTime?
+
+  @@unique([studentId, assignmentId])
+  @@index([assignmentId])
+  @@index([studentId])
+  @@map("assignment_submissions")
+}
+
+// ============================================================
+// 11. ENROLLMENT
+// ============================================================
+
+model Enrollment {
+  id String @id @default(uuid())
+
+  courseId String
+  course   Course @relation(fields: [courseId], references: [id], onDelete: Cascade)
+
+  studentId String
+  student   User   @relation(fields: [studentId], references: [id], onDelete: Cascade)
+
+  academyId String
+  academy   Academy @relation(fields: [academyId], references: [id], onDelete: Cascade)
+
+  amount   Float  @default(0)
+  currency String @default("usd")
+
+  email String
+  name  String
+  phone String?
+
+  status EnrollmentStatus @default(PENDING)
+
+  enrolledAt  DateTime  @default(now())
+  completedAt DateTime?
+
+  payments Payment[]
+
+  @@unique([studentId, courseId])
+  @@index([studentId])
+  @@index([courseId])
+  @@index([academyId])
+  @@index([status])
+  @@map("enrollments")
+}
+
+// ============================================================
+// 12. PAYMENT
+// ============================================================
+
+model Payment {
+  id String @id @default(uuid())
+
+  amount   Float
+  currency String @default("usd")
+
+  status PaymentStatus @default(PENDING)
+  type   PaymentType
+
+  stripeSessionId String? @unique
+  stripePaymentId String? @unique
+
+  courseId String?
+  course   Course? @relation(fields: [courseId], references: [id], onDelete: SetNull)
+
+  studentId String
+  student   User   @relation(fields: [studentId], references: [id], onDelete: Cascade)
+
+  enrollmentId String?
+  enrollment   Enrollment? @relation(fields: [enrollmentId], references: [id], onDelete: SetNull)
+
+  academyId String
+  academy   Academy @relation(fields: [academyId], references: [id], onDelete: Cascade)
+
+  metadata Json? @default("{}")
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([status])
+  @@index([studentId])
+  @@index([courseId])
+  @@index([academyId])
+  @@index([studentId, courseId])
+  @@map("payments")
+}
+
+// ============================================================
+// 13. REVIEW
+// ============================================================
+
+model Review {
+  id      String @id @default(uuid())
+  content String
+  rating  Int    @default(5)
+
+  courseId String
+  course   Course @relation(fields: [courseId], references: [id], onDelete: Cascade)
+
+  studentId String
+  student   User   @relation(fields: [studentId], references: [id], onDelete: Cascade)
+
+  academyId String
+  academy   Academy @relation(fields: [academyId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([courseId])
+  @@index([courseId, rating])
+  @@index([studentId])
+  @@index([academyId])
+  @@map("reviews")
+}
+
+// ============================================================
+// 14. LIVE SESSION
+// ============================================================
+
+model LiveSession {
+  id          String  @id @default(uuid())
+  title       String
+  description String?
+  thumbnail   String?
+
+  sessionDate          DateTime
+  registrationDeadline DateTime
+
+  maxCapacity Int?
+  meetingLink String?
+  isPublished Boolean @default(false)
+
+  keyTopics        String[] @default([])
+  learningOutcomes String[] @default([])
+  whoShouldAttend  String[] @default([])
+  level            String   @default("BEGINNER")
+
+  hostId String
+  host   User   @relation(fields: [hostId], references: [id], onDelete: Cascade)
+
+  academyId String
+  academy   Academy @relation(fields: [academyId], references: [id], onDelete: Cascade)
+
+  registrations LiveRegistration[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([academyId])
+  @@index([sessionDate])
+  @@map("live_sessions")
+}
+
+model LiveRegistration {
+  id    String  @id @default(uuid())
+  name  String
+  email String
+  phone String?
+
+  sessionId String
+  session   LiveSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+
+  registeredAt DateTime @default(now())
+
+  @@unique([email, sessionId])
+  @@map("live_registrations")
+}
+
+// ============================================================
+// 15. CHAT
+// ============================================================
+
+model ChatMessage {
+  id        String  @id @default(uuid())
+  sessionId String
+  userId    String?
+  role      String
+  content   String
+
+  academyId String
+  academy   Academy @relation(fields: [academyId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+
+  @@index([sessionId])
+  @@index([academyId])
+  @@index([createdAt])
+  @@map("chat_messages")
+}
