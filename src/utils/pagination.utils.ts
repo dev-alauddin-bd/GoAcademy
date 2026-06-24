@@ -1,0 +1,43 @@
+// src/utils/pagination.utils.ts
+export interface PaginationParams {
+  page: number;
+  limit: number;
+}
+
+export interface PaginatedResult<T> {
+  data: T[];
+  pagination: {
+    page: number;
+    limit: number;
+    total: number;
+    totalPages: number;
+    hasNext: boolean;
+    hasPrev: boolean;
+  };
+}
+
+export const getPagination = (page: number, limit: number): PaginationParams => ({
+  page: Math.max(1, page),
+  limit: Math.min(100, Math.max(1, limit)),
+});
+
+export const paginate = <T>(
+  data: T[],
+  total: number,
+  page: number,
+  limit: number
+): PaginatedResult<T> => {
+  const totalPages = Math.ceil(total / limit);
+  
+  return {
+    data,
+    pagination: {
+      page,
+      limit,
+      total,
+      totalPages,
+      hasNext: page < totalPages,
+      hasPrev: page > 1,
+    },
+  };
+};
